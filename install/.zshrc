@@ -830,3 +830,5 @@ if [[ "$ZPWR_PROFILING" == true ]]; then
     zprof
 fi
 #}}}***********************************************************
+
+[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh

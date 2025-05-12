@@ -1,906 +1,162 @@
-#!/usr/bin/env bash
-#{{{                    MARK:Header
-#**************************************************************
-#####   Author: JACOBMENKE
-#####   Date: Sat Apr  7 02:19:29 EDT 2018
-#####   Purpose: bash script to hold installer lib fns
-#####   Notes: 
-#}}}***********************************************************
-
-#{{{                    MARK:installer lib fns
-#**************************************************************
-function zpwrIsZsh(){
-
-    test -n "$ZSH_VERSION"
-}
-
-if zpwrIsZsh; then
-
-    function zpwrValidatePipPackage() {
-
-        if [[ -z "$1" ]]; then
-            return 1
-        fi
-
-        local package="$1"
-
-        #get last package
-        if (( $+zpwrPipBlacklist )); then
-            if (( zpwrPipBlacklist[(Ie)$package] )); then
-                zpwrLogInfo "skip update of $package due to blacklist"
-                return 1
-            fi
-        fi
-
-        return 0
-    }
-
-    function zpwrUpdatePip() {
-
-        if [[ -z "$1" || -z "$2" || -z "$3" ]]; then
-            zpwrLogConsoleErr "usage: zpwrUpdatePip COMMAND PACKAGE_MANAGER FORCE_SUDO"
-            return 1
-        fi
-
-        local cmd="$1"
-        local packageManager="$2"
-        local forceSudo="$3"
-        local needSudoBase installDir
-
-        typeset -Tgx ZPWR_PIP_BLACKLIST zpwrPipBlacklist
-
-        zpwrCommandExists ${=cmd} && ${=cmd} -c 'import pip' &> /dev/null && {
-
-            zpwrPrettyPrint "Updating $cmd packages"
-
-            installDir="$PIP3_HOME"
-
-            needSudoBase=false
-
-            zpwrPrettyPrint "Outdated $packageManager list with sudo needed: $needSudoBase"
-
-            if [[ "$needSudoBase" == true ]]; then
-                outdated=$(sudo -EH ${=cmd} -m pip list --user --outdated --format=columns | sed -n '3,$p' | awk '{print $1}')
-            else
-                outdated=$(${=cmd} -m pip list --user --outdated --format=columns | sed -n '3,$p' | awk '{print $1}')
-            fi
-
-            for package in "${(@f)outdated}"; do
-
-                zpwrValidatePipPackage "$package" || continue
-
-                installDir="$PIP3_HOME/$package"
-
-                if [[ $forceSudo == true || ! -w "$installDir" ]]; then
-                    zpwrNeedSudo=true
-                else
-                    zpwrNeedSudo=false
-                fi
-
-                zpwrPrettyPrint "sudo needed: $zpwrNeedSudo for $package at $installDir"
-
-                if [[ "$zpwrNeedSudo" == true ]]; then
-                    sudo -EH ${=cmd} -m pip install --break-system-packages --user --upgrade --ignore-installed -- "$package"
-                else
-                    ${=cmd} -m pip install --break-system-packages --user --upgrade --ignore-installed -- "$package"
-                fi
-
-            done
-
-            zpwrPrettyPrint "Updating $packageManager with sudo needed: $needSudoBase"
-
-            if [[ "$needSudoBase" == true ]]; then
-                sudo -EH ${=cmd} -m pip install --break-system-packages --user --upgrade pip setuptools wheel
-            else
-                ${=cmd} -m pip install --break-system-packages --user --upgrade pip setuptools wheel
-            fi
-
-        }
-    }
-
-    if ! type -a -- zpwrExists>/dev/null 2>&1; then
-
-        function zpwrExists(){
-
-            if [[ -z "$1" ]]; then
-                zpwrLogConsoleErr "usage: zpwrExists <item...>"
-                return 1
-            fi
-            local i
-            #alternative is command -v
-            for i in "$@";do
-                type -a -- "$i" &>/dev/null || return 1 &&
-                [[ $(type -a -- "$i" 2>/dev/null) != *"suffix alias"* ]]
-            done
-        }
-    fi
-else
-    function zpwrExists(){
-
-        if [[ -z "$1" ]]; then
-            zpwrLogConsoleErr "usage: zpwrExists <item...>"
-            return 1
-        fi
-        local i
-
-        #alternative is command -v
-        for i in "$@";do
-            type -a -- "$i" >/dev/null 2>&1
-        done
-    }
-fi
-
-function zpwrStdinExists(){
-
-    local in arg
-    in="$(cat)"
-    arg="$1"
-    if [[ -n "$in" ]]; then
-        echo "$in"
-    else
-        echo "No input found for $arg!"
-    fi
-}
-
-function zpwrCommandExists(){
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrCommandExists <command...>"
-        return 1
-    fi
-    local cmd
-
-    for cmd in "$@"; do
-        type -ap -- "$cmd" >/dev/null 2>&1 || return 1
-    done
-}
-
-function zpwrBlocksToSize(){
-
-    local bytes input
-
-    read input
-    bytes=$(( input * 512 ))
-    echo $bytes | humanreadable
-}
-
-function zpwrHumanReadable(){
-
-    awk 'function human(x) {
-        s=" B   KiB MiB GiB TiB PiB EiB ZiB YiB"
-        while (x>=1024 && length(s)>1){
-            x/=1024; s=substr(s,5)
-        }
-        s=substr(s,1,4)
-        xf=(s==" B  ") ? "%d" : "%.2f"
-        return sprintf(xf"%s", x, s)
-    }
-    {gsub(/^[0-9]+/, human($1));print}'
-}
-
-function zpwrPerlRemoveSpaces(){
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrPerlRemoveSpaces <file...>"
-        return 1
-    fi
-
-    local file
-
-    for file;do
-        printf "\x1b[38;5;129mRemoving from \x1b[38;5;57m${file}\x1b[38;5;46m"'!'"\n\x1b[0m"
-        perl -pi -e 's@\s+$@\n@g; s@\x09$@    @g;s@\x20@ @g; s@^s*\n$@@; s@(\S)[\x20]{2,}@$1\x20@' "$file"
-    done
-}
-
-function zpwrEscapeRemove(){
-
-    while read; do
-        echo "$REPLY" | sed -e 's@\e\[.\{1,5\}m@@g'
-    done
-}
-
-function zpwrPrettyPrintNoNewline(){
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrPrettyPrintNoNewline <string>"
-        return 1
-    fi
-
-    printf "\x1b[1m"
-    printf "%s " "$@"
-    printf "\x1b[0m"
-}
-
-function zpwrIsBinary() {
-
-    [[ $(LC_MESSAGES=C command grep -Hm1 '^' < "${1:-$REPLY}") =~ '^Binary' ]]
-}
-
-function zpwrLogColor(){
-
-    if [[ -z $2 ]]; then
-        zpwrLogConsoleErr "usage: zpwrLogColor <lvl> <msg>"
-        return 1
-    fi
-
-    printf "${ZPWR_LOG_UNDER_COLOR}_____________$ZPWR_LOG_DATE_COLOR$(date)\x1b[0m${ZPWR_LOG_UNDER_COLOR}____$1: "
-    shift
-    printf "_$ZPWR_LOG_QUOTE_COLOR$ZPWR_QUOTE_START_CHAR$ZPWR_LOG_MSG_COLOR%b\x1b[0m$ZPWR_LOG_QUOTE_COLOR$ZPWR_QUOTE_END_CHAR${ZPWR_LOG_UNDER_COLOR}_" "$*"
-    printf "\x1b[0m"
-    printf "\n"
-}
-
-function zpwrLogConsoleInfo(){
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrLogConsoleInfo <msg>"
-        return 1
-    fi
-    zpwrLogColor INFO "$*" >&1
-}
-
-function zpwrLogConsoleErr(){
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrLogConsoleErr <msg>"
-        return 1
-    fi
-    zpwrLogColor ERROR "$*" >&2
-}
-
-function zpwrLogConsoleDebug(){
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrLogConsoleDebug <msg>"
-        return 1
-    fi
-
-    if [[ $ZPWR_DEBUG == true ]]; then
-       zpwrLogColor DEBUG "$*"
-    fi
-}
-
-function zpwrLogConsoleTrace(){
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrLogConsoleTrace <msg>"
-        return 1
-    fi
-
-    if [[ $ZPWR_TRACE == true ]]; then
-       zpwrLogColor TRACE "$*"
-    fi
-}
-
-function zpwrLogConsoleNotGit() {
-
-    zpwrLogConsoleErr "'$(pwd)' is not a git dir"
-}
-
-function zpwrLogConsolePrefix(){
-
-    zpwrPrettyPrint "$ZPWR_CHAR_LOGO $*"
-    zpwrLogInfo "$ZPWR_CHAR_LOGO $*"
-
-}
-
-function zpwrLogConsoleHeader(){
-
-    zpwrPrettyPrint "$*"
-    zpwrLogColor "$*"
-
-}
-
-function zpwrLog(){
-
-    local lvl
-
-    if [[ $ZPWR_COLORS == true ]]; then
-        if [[ -n $2 ]]; then
-            lvl=$1
-            shift
-            zpwrLogColor $lvl "$*" >> "$ZPWR_LOGFILE"
-        elif [[ -p /dev/stdin ]]; then
-            zpwrLogColor STDIN "$(cat)" >> "$ZPWR_LOGFILE"
-        elif [[ -z "$2" ]]; then
-                zpwrLogConsoleErr "usage: zpwrLog <lvl> <msg>"
-                return 1
-        fi
-    else
-        if [[ -n $2 ]]; then
-            lvl=$1
-            shift
-            {
-                printf "\n_____________$(date)____ "
-                printf "_$lvl: '%s'_ " "$@"
-                printf "\n"
-            } >> "$ZPWR_LOGFILE"
-        elif [[ -p /dev/stdin ]]; then
-            {
-                printf "\n_____________$(date)____ _STDIN: '"
-                cat
-                printf "'_ \n"
-            } >> "$ZPWR_LOGFILE"
-        else
-            if [[ -z "$1" ]]; then
-                zpwrLogConsoleErr "usage: zpwrLog <msg>"
-                return 1
-            fi
-        fi
-    fi
-}
-
-function zpwrLogInfo(){
-
-    zpwrLog INFO "$*"
-}
-
-function zpwrLogError(){
-
-    zpwrLog ERROR "$*"
-}
-
-function zpwrLogDebug(){
-
-    if [[ $ZPWR_DEBUG == true ]]; then
-       zpwrLog DEBUG "$*"
-    fi
-}
-
-function zpwrLogTrace(){
-
-    if [[ $ZPWR_TRACE == true ]]; then
-       zpwrLog TRACE "$*"
-    fi
-}
-function zpwrNeedSudo(){
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrNeedSudo <file>"
-        return 1
-    fi
-
-    if [[ ! -w "$1" ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-function zpwrFail(){
-
-        echo "Failure due to $1" >&2
-        exit 1
-}
-
-function zpwrFileMustExist(){
-
-    if [[ ! -f "$1" ]]; then
-        echo "Where is the file '$1'?" >&2
-        exit 1
-    fi
-}
-
-function zpwrIsGitDir(){
-
-    command git rev-parse --git-dir 2> /dev/null 1>&2
-}
-
-function zpwrIsGitDirMessage(){
-
-    if ! command git rev-parse --git-dir 2> /dev/null 1>&2; then
-        printf "\x1b[0;1;31m"
-        zpwrLogConsoleErr "NOT GIT DIR: $(pwd -P)"
-        printf "\x1b[0m"
-        return 1
-    fi
-}
-
-
-function zpwrGoInstallerDir(){
-
-    local ret
-
-    ret=0
-
-    builtin cd "$ZPWR_INSTALL" || ret=1
-
-    if [[ "$(pwd)" != "$ZPWR_INSTALL" ]]; then
-        echo "pwd '$PWD' is not ZPWR_INSTALL '$ZPWR_INSTALL'" >&2
-    fi
-
-    if (( ret == 1 )); then
-        echo "where is ZPWR_INSTALL '$ZPWR_INSTALL'" >&2
-        exit 1
-    fi
-}
-
-
-function zpwrGoInstallerOutputDir(){
-
-    local ret
-
-    ret=0
-
-    if [[ ! -d "$ZPWR_INSTALLER_OUTPUT" ]]; then
-        command mkdir -p "$ZPWR_INSTALLER_OUTPUT"
-    fi
-
-    builtin cd "$ZPWR_INSTALLER_OUTPUT" || ret=1
-
-    if [[ "$(pwd)" != "$ZPWR_INSTALLER_OUTPUT" ]]; then
-        echo "pwd '$PWD' is not '$ZPWR_INSTALLER_OUTPUT'" >&2
-    fi
-
-    if (( ret == 1 )); then
-        echo "where is ZPWR_INSTALLER_OUTPUT '$ZPWR_INSTALLER_OUTPUT'" >&2
-        exit 1
-    fi
-}
-
-function zpwrInstallGitHubPluginsFromFile(){
-
-    function usage (){
-        echo "Usage :  $0 [options] [--]
-
-        Options:
-        -h|help       Display this message
-        -f|force)     overwrite dest"
-
-    }
-
-    while getopts ":hf" opt;  do
-      case $opt in
-
-        h|help) usage; exit 0   ;;
-
-        f|force) forceFlag=true ;;
-
-        * ) printf "\n  Option does not exist : $OPTARG\n"
-            usage; exit 1   ;;
-
-        esac
-    done
-
-    shift $((OPTIND-1))
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrInstallGitHubPluginsFromFile <repo_file>"
-        return 1
-    fi
-
-    local file
-
-    file="$1"
-
-    if [[ $forceFlag == true ]]; then
-        while read repo; do
-            zpwrOverwriteGitHubPlugin "$repo"
-        done < "$file"
-    else
-        while read repo; do
-            zpwrInstallGitHubPlugin "$repo"
-        done < "$file"
-    fi
-    unset usage
-
-}
-
-function zpwrOverwriteGitHubPlugin(){
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrOverwriteGitHubPlugin <repo>"
-        return 1
-    fi
-
-    local user repo
-
-    repo=${1#*/}
-    user=${1%/*}
-
-    echo "Installing plugin $user/$repo."
-    if [[ -d "$repo" ]]; then
-        zpwrPrettyPrint "rm -rf $repo"
-        rm -rf "$repo"
-    fi
-
-    test -d "$repo" || git clone "https://github.com/$1.git"
-}
-
-function zpwrInstallGitHubPlugin(){
-
-    if [[ -z "$1" ]]; then
-        zpwrLogConsoleErr "usage: zpwrInstallGitHubPlugin <repo>"
-        return 1
-    fi
-
-    local user repo
-
-    repo=${1#*/}
-    user=${1%/*}
-
-    echo "Installing plugin $user/$repo."
-
-    git clone "https://github.com/$1.git"
-}
-
-function zpwrInstallerUpdate(){
-
-    zpwrExists "$1" || {
-
-        if [[ $2 == mac ]]; then
-            brew install "$1"
-        elif [[ $2 == debian ]];then
-            sudo apt-get install -y "$1"
-        elif [[ $2 == alpine ]];then
-            sudo apk add "$1"
-        elif [[ $2 == suse ]];then
-            sudo zypper --non-interactive install "$1"
-        elif [[ $2 == arch ]];then
-            sudo pacman -S --noconfirm "$1"
-        elif [[ $2 == redhat ]];then
-            sudo yum install -y "$1"
-        elif [[ $2 == freebsd ]];then
-            sudo pkg install -y "$1"
-        else
-            zpwrPrettyPrint "Error at install of '$1' on '$2'." >&2
-        fi
-    }
-}
-
-function zpwrInstallerUpgrade(){
-
-    if [[ $1 == mac ]]; then
-        brew update
-        brew upgrade
-    elif [[ $1 == debian ]];then
-        sudo apt-get update -y
-        sudo apt-get upgrade -y
-    elif [[ $1 == alpine ]];then
-        sudo apk update
-        sudo apk upgrade
-    elif [[ $1 == suse ]];then
-        sudo zypper --non-interactive update
-    elif [[ $1 == arch ]];then
-        sudo pacman -Syu --noconfirm
-    elif [[ $1 == redhat ]];then
-        sudo yum upgrade -y
-    elif [[ $1 == freebsd ]];then
-        sudo pkg upgrade -y
-    else
-        zpwrPrettyPrint "Error with upgrade with '$1'." >&2
-    fi
-}
-
-function zpwrInstallerRefresh(){
-
-    if [[ $1 == mac ]]; then
-        brew update
-    elif [[ $1 == debian ]];then
-        sudo apt-get update -y
-        sudo apt-get autoremove -y
-    elif [[ $1 == alpine ]];then
-        sudo apk update
-    elif [[ $1 == suse ]];then
-        sudo zypper refresh
-    elif [[ $1 == arch ]];then
-        sudo pacman -Syy --noconfirm
-    elif [[ $1 == freebsd ]];then
-        sudo pkg update
-    elif [[ $1 == redhat ]];then
-        sudo yum check-update -y
-    else
-        zpwrPrettyPrint "Error with refresh with '$1'." >&2
-    fi
-
-}
-
-function zpwrPrettyPrintInstaller(){
-
-    (( ++INSTALL_COUNTER ))
-    printf "\x1b[32;1m"
-    perl -le "print '#'x80"
-    printf "\x1b[34;4m"
-    printf "$INSTALL_COUNTER>>> $1\n"
-    printf "\x1b[0;32;1m"
-    perl -le "print '#'x80"
-    printf "\x1b[0m"
-    printf "\n"
-}
-
-function zpwrNeedSudo(){
-
-    if [[ ! -w "$1" ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-function proceed(){
-
-    while true; do
-        printf "Proceed?(y/n) >>> "
-        read -n1
-        echo
-        case $REPLY in
-            [yY])
-                break;
-                ;;
-            [nN])
-                exit 1
-                ;;
-            *)
-                zpwrLogConsoleErr "You must enter y(es) or n(no)"
-                ;;
-        esac
-    done
-}
-
-function zpwrPrettyPrint(){
-
-    if [[ -n "$1" ]];then
-        printf "\x1b[1;4m"
-        printf "%s " "$@"
-        printf "\x1b[0m\n"
-    else
-        zpwrLogConsoleErr "usage: zpwrPrettyPrint <msg>"
-        return 1
-    fi
-}
-
-function zpwrPrettyPrintBoxStdin(){
-
-    local perlfile
-
-    perlfile="$ZPWR_SCRIPTS/boxPrint.pl"
-
-    [[ ! -e "$perlfile" ]] && echo "where is perlfile '$perlfile'?" >&1 && exit 1
-    (( ++INSTALL_COUNTER ))
-    {
-        printf "$INSTALL_COUNTER>>> $@\n"
-        cat
-    } | "$perlfile" -f
-    echo
-}
-
-function zpwrPrettyPrintBox(){
-
-    local perlfile
-
-    perlfile="$ZPWR_SCRIPTS/boxPrint.pl"
-
-    [[ ! -e "$perlfile" ]] && echo "where is perlfile '$perlfile'?" >&1 && exit 1
-    (( ++INSTALL_COUNTER ))
-    printf "$INSTALL_COUNTER>>> $@\n" | "$perlfile" -f
-    echo
-}
-
-function zpwrTurnOffDebugging(){
-
-    set +x
-    set +v
-    exec 2> /dev/tty
-}
-
-function zpwrTurnOnDebugging(){
-
-    set -x
-    set -v
-    exec 2>> >(tee "$ZPWR_INSTALLER_OUTPUT/logfile.txt")
-    exec >> >(tee "$ZPWR_INSTALLER_OUTPUT/logfile.txt")
-}
-
-function zpwrAlternatingPrettyPrint(){
-
-    local counter=0
-
-    if [[ -z $1 ]]; then
-        cat | perl -F"$ZPWR_DELIMITER_CHAR" -anE '
-        my $counter=0;
-        for (@F){
-            if ($counter % 2 == 0){
-                 print "\x1b[36m$_\x1b[0m"
-            } else {
-                 print "\x1b[1;4;34m$_\x1b[0m"
-            }
-        ++$counter;
-        };print "\x1b[0m"'
-    else
-        perl -F"$ZPWR_DELIMITER_CHAR" -anE '
-        my $counter=0;
-        for (@F){
-            if ($counter % 2 == 0){
-                 print "\x1b[36m$_\x1b[0m"
-            } else {
-                 print "\x1b[1;4;34m$_\x1b[0m"
-            }
-        ++$counter
-        }; print "\x1b[0m"' <<< "$@"
-
-    fi
-
-}
-
-function zpwrClearGitCache(){
-
-    if ! zpwrIsGitDir; then
-        zpwrLogConsoleNotGit
-        return 1
-    fi
-
-    git for-each-ref --format="%(refname)" refs/original/ | xargs -n 1 git update-ref -d 2>/dev/null
-    git reflog expire --expire=now --all 2>/dev/null
-    git gc --prune=now 2>/dev/null
-}
-
-function zpwrGitRepoUpdater() {
-
-    local enclosing_dir generic_git_repo_plugin
-
-    enclosing_dir="$1"
-
-    if [[ -d "$enclosing_dir" ]]; then
-        for generic_git_repo_plugin in "$enclosing_dir/"*; do
-            if [[ -d "$generic_git_repo_plugin" ]]; then
-                    (
-                        builtin cd "$generic_git_repo_plugin" &&
-                        zpwrIsGitDir && 
-                        printf "\x1b[1m%s:\x1b[0m " "$(basename "$generic_git_repo_plugin")" &&
-                        git fetch --all --prune &&
-                        git pull --all && zpwrClearGitCache
-                    )
-            fi
-        done
-    fi
-}
-
-function zpwrClearList() {
-
-    local FOUND out out2 ls_command lib_command rank loc arg
-
-    if [[ "$ZPWR_OS_TYPE" == darwin ]]; then
-        if zpwrCommandExists exa;then
-            ls_command="$ZPWR_EXA_COMMAND"
-        else
-            if zpwrCommandExists grc; then
-                ls_command="grc -c $HOME/conf.gls gls -iFlhAd --color=always"
-            else
-                ls_command="ls -iFlhAOd"
-            fi
-        fi
-        lib_command="otool -L"
-    elif [[ "$ZPWR_OS_TYPE" == linux ]];then
-
-        if zpwrCommandExists exa;then
-            ls_command="$ZPWR_EXA_COMMAND"
-        else
-            if zpwrCommandExists grc; then
-                ls_command="grc -c $HOME/conf.gls ls -iFlhA --color=always"
-            else
-                ls_command="ls -iFlhA"
-            fi
-        fi
-        lib_command="ldd"
-    else
-        if zpwrCommandExists grc;then
-            ls_command="grc -c $HOME/conf.gls ls -iFlhA"
-        else
-            ls_command="ls -iFhlA"
-        fi
-        lib_command="ldd"
-    fi
-
-    if [[ -n "$1" ]]; then
-        for arg in "$@"; do
-            FOUND=false
-            zpwrPrettyPrint "/--------------- $arg --------------/"
-            # perl boxPrint.pl "$arg"
-            echo
-            if zpwrExists $arg; then
-                FOUND=true
-                # exe matching
-                while read loc;do
-                    lf="$(echo $loc | cut -d' ' -f3-10)"
-                    if [[ $(type -- "$arg") == "$loc" ]]; then
-                        rank="Primary"
-                    else
-                        rank="Secondary"
-                    fi
-                    if [[ -f "$lf" ]]; then
-                        zpwrPrettyPrint "$lf" &&
-                        eval "$ls_command -- $lf" &&
-                        zpwrPrettyPrint "FILE TYPE:" &&
-                        eval "file -- $lf" &&
-                        zpwrPrettyPrint "DEPENDENT ON:" &&
-                        eval "$lib_command $lf"
-                        zpwrPrettyPrint "SIZE:"
-                        du -sh -- "$lf" 2>/dev/null
-                        zpwrPrettyPrint "STATS:"
-                        stat -- "$lf" 2>/dev/null
-                        out=$(man -wa "$(basename $lf)" 2>/dev/null)
-                        if [[ -n "$out" ]]; then
-                            zpwrPrettyPrint "MAN:"
-                            echo "$out"
-                        fi
-                        if zpwrIsZsh; then
-                            out="$(hash | command grep "^$arg=")"
-                            if [[ -n "$out" ]]; then
-                                zpwrPrettyPrint "HASH TABLE:"
-                                echo "$(hash | command grep "^$arg=")"
-                            fi
-                        fi
-                        zpwrPrettyPrint "PRECEDENCE: "
-                        echo "$rank"
-                        echo
-                        echo
-                    else
-                        zpwrPrettyPrint "FILE TYPE:"
-                        echo "$loc"
-                        echo "$loc" | command grep -sq "function" &&
-                        {
-                            type -f -- \
-                "$(echo "$loc" | awk '{print $1}')" 2>/dev/null |
-                            nl -v 0
-                        }
-                        echo "$loc" | command grep -sq "alias" &&
-                    {
-                alias -- "$(echo "$loc" | awk '{print $1}')"
-                        }
-                        zpwrPrettyPrint "PRECEDENCE: "
-                        echo "$rank"
-                        echo
-                        echo
-                    fi
-                done < <(type -a -- "$arg" 2>/dev/null | sort | uniq)
-            fi
-            # path matching, not exe
-            if eval "$ls_command -d -- \"$arg\"" 2>/dev/null; then
-                FOUND=true
-                zpwrPrettyPrint "$arg"
-                zpwrPrettyPrint "FILE TYPE:"
-                file -- "$arg"
-                zpwrPrettyPrint "SIZE:"
-                du -sh -- "$arg" 2>/dev/null
-                zpwrPrettyPrint "STATS:"
-                stat -- "$arg" 2>/dev/null
-                # for readability
-                echo
-                echo
-            else
-                out=$(typeset -m -- "$arg")
-
-                if [[ -n $out ]]; then
-                    FOUND=true
-                    zpwrPrettyPrint "DATA TYPE:"
-                    print -rl -- ${(tP)arg}
-                    zpwrPrettyPrint "VALUE:"
-                    echo $out
-                    # for readability
-                    echo
-                    echo
-                else
-                    out2=$(set | command grep "^$arg=")
-                    if [[ -n $out2 ]]; then
-                        FOUND=true
-                        zpwrPrettyPrint "DATA TYPE:"
-                        print -rl -- ${(tP)arg}
-                        zpwrPrettyPrint "ENV:"
-                        echo $out2
-                        # for readability
-                        echo
-                        echo
-                    fi
-                fi
-            fi
-            if [[ $FOUND == false ]]; then
-                zpwrLogConsoleErr "NOT FOUND: '"'$arg'"'_____ = ""'$arg'"
-            fi
-        done
-    else
-        clear && eval "$ls_command"
-    fi
-}
-
-#}}}***********************************************************
+[3J[H[2J[1m5vp3x,|0c4|
+[0mtotal 1656
+69913987 -rwxr-xr-x   1 supex  staff  -  3.2K May  6 14:18 about.sh*
+69913988 -rwxr-xr-x   1 supex  staff  -  2.1K May  6 14:18 allPanes.zsh*
+69913989 -rwxr-xr-x   1 supex  staff  -  2.5K May  6 14:18 allPanesSwap.zsh*
+69913990 -rwxr-xr-x   1 supex  staff  -  426B May  6 14:18 archetypeShower.sh*
+69913991 -rwxr-xr-x   1 supex  staff  -  1.2K May  6 14:18 autoUpdater.sh*
+69913992 -rwxr-xr-x   1 supex  staff  -  1.2K May  6 14:18 backgroundMastery.sh*
+69913993 -rwxr-xr-x   1 supex  staff  -  619B May  6 14:18 backupConfig.sh*
+69913994 -rwxr-xr-x   1 supex  staff  -  1.0K May  6 14:18 banner.pl*
+69913995 -rwxr-xr-x   1 supex  staff  -  2.7K May  6 14:18 batchRename.sh*
+69913996 -rwxr-xr-x   1 supex  staff  -  560B May  6 14:18 blueText.sh*
+69913997 -rwxr-xr-x   1 supex  staff  -  522B May  6 14:18 blueUpperText.sh*
+69913998 -rwxr-xr-x   1 supex  staff  -  4.3K May  6 14:18 boiler_gen.py*
+69913999 -rwxr-xr-x   1 supex  staff  -  455B May  6 14:18 boldText.sh*
+69914000 -rwxr-xr-x   1 supex  staff  -  2.8K May  6 14:18 boxPrint.pl*
+69914001 -rwxr-xr-x   1 supex  staff  -  1.6K May  6 14:18 bridgeDown.sh*
+69914002 -rwxr-xr-x   1 supex  staff  -  1.8K May  6 14:18 bridgeUp.sh*
+69914003 -rwxr-xr-x   1 supex  staff  -  1.2K May  6 14:18 c.pl*
+69914004 -rwxr-xr-x   1 supex  staff  -  649B May  6 14:18 clearTrash.sh*
+69914005 -rwxr-xr-x   1 supex  staff  -  4.8K May  6 14:18 colorLogger.sh*
+69914006 -rwxr-xr-x   1 supex  staff  -  390B May  6 14:18 connectionShower.sh*
+69914007 -rwxr-xr-x   1 supex  staff  -  487B May  6 14:18 coolFormatter.sh*
+69913986 -rwxr-xr-x   1 supex  staff  -  3.5K May  6 14:18 CPU_Stresser.sh*
+69914008 -rwxr-xr-x   1 supex  staff  -  2.1K May  6 14:18 createScriptButDontOpenSublime.sh*
+69914009 -rwxr-xr-x   1 supex  staff  -  2.5K May  6 14:18 createTextFile.sh*
+69914010 -rwxr-xr-x   1 supex  staff  -  2.6K May  6 14:18 crossOSCommands.sh*
+69914011 -rwxr-xr-x   1 supex  staff  -  3.7K May  6 14:18 crossOSExecute.sh*
+69914012 -rwxr-xr-x   1 supex  staff  -  636B May  6 14:18 delete_dups.zsh*
+69914013 -rwxr-xr-x   1 supex  staff  -  2.3K May  6 14:18 directoryContentsSize.sh*
+69914014 -rwxr-xr-x   1 supex  staff  -  664B May  6 14:18 dsDownloader.sh*
+69914015 -rwxr-xr-x   1 supex  staff  -  892B May  6 14:18 duplicateLineDeleter.sh*
+69914016 -rwxr-xr-x   1 supex  staff  -  1.0K May  6 14:18 em-server.sh*
+69914017 -rwxr-xr-x   1 supex  staff  -  1.1K May  6 14:18 encrypt.sh*
+69914018 -rwxr-xr-x   1 supex  staff  -  781B May  6 14:18 escapeRemover.pl*
+69914019 -rwxr-xr-x   1 supex  staff  -  113K May  6 14:18 etags*
+69914020 -rwxr-xr-x   1 supex  staff  -  1.5K May  6 14:18 evilSkull.sh*
+69914021 -rwxr-xr-x   1 supex  staff  -  909B May  6 14:18 eyes.sh*
+69914022 -rwxr-xr-x   1 supex  staff  -  1.1K May  6 14:18 fdswap.sh*
+69914023 -rwxr-xr-x   1 supex  staff  -  2.0K May  6 14:18 forDir.sh*
+69914024 -rwxr-xr-x   1 supex  staff  -  2.1K May  6 14:18 forDirDev.sh*
+69914025 -rwxr-xr-x   1 supex  staff  -  2.1K May  6 14:18 forDirMaster.sh*
+69914026 -rwxr-xr-x   1 supex  staff  -  3.8K May  6 14:18 forDirZipRar.zsh*
+69914027 -rwxr-xr-x   1 supex  staff  -  327B May  6 14:18 forever.sh*
+69914028 -rwxr-xr-x   1 supex  staff  -  1.3K May  6 14:18 fsWatchLongRunning.sh*
+69914029 -rwxr-xr-x   1 supex  staff  -  4.1K May  6 14:18 fzfAgOpts.sh*
+69914030 -rwxr-xr-x   1 supex  staff  -  4.3K May  6 14:18 fzfEnv.sh*
+69914031 -rwxr-xr-x   1 supex  staff  -  2.3K May  6 14:18 fzfEnvCurrent.sh*
+69914032 -rwxr-xr-x   1 supex  staff  -  4.4K May  6 14:18 fzfEnvVerbs.sh*
+69914033 -rwxr-xr-x   1 supex  staff  -  590B May  6 14:18 fzfGitOpts.sh*
+69914034 -rwxr-xr-x   1 supex  staff  -  988B May  6 14:18 fzfGitSearchOpts.sh*
+69914035 -rwxr-xr-x   1 supex  staff  -  4.1K May  6 14:18 fzfGtagsOpts.sh*
+69914036 -rwxr-xr-x   1 supex  staff  -  613B May  6 14:18 fzfMan.sh*
+69914037 -rwxr-xr-x   1 supex  staff  -  1.3K May  6 14:18 fzfPreviewOpts.sh*
+69914038 -rwxr-xr-x   1 supex  staff  -  821B May  6 14:18 fzfPreviewOpts2Pos.sh*
+69914039 -rwxr-xr-x   1 supex  staff  -  3.5K May  6 14:18 fzfPreviewOptsCommon.sh*
+69914040 -rwxr-xr-x   1 supex  staff  -  3.5K May  6 14:18 fzfPreviewOptsCommon2Pos.sh*
+69914041 -rwxr-xr-x   1 supex  staff  -  825B May  6 14:18 fzfPreviewOptsCtrlT.sh*
+69914042 -rwxr-xr-x   1 supex  staff  -  1.3K May  6 14:18 fzfPreviewOptsPony.sh*
+69914043 -rwxr-xr-x   1 supex  staff  -  471B May  6 14:18 genericDisplayer.sh*
+69914044 -rwxr-xr-x   1 supex  staff  -  479B May  6 14:18 genericDisplayerLolcat.sh*
+69914047 -rwxr-xr-x   1 supex  staff  -  6.4K May  6 14:18 gitgo.sh*
+69914045 -rwxr-xr-x   1 supex  staff  -  2.2K May  6 14:18 gitRemoteRepoInformation.sh*
+69914046 -rwxr-xr-x   1 supex  staff  -  1.5K May  6 14:18 gitSdiffColorizer.pl*
+69914048 -rwxr-xr-x   1 supex  staff  -  461B May  6 14:18 goForward.sh*
+69914049 -rwxr-xr-x   1 supex  staff  -  452B May  6 14:18 headerSummarizer.sh*
+69914050 -rwxr-xr-x   1 supex  staff  -  3.7K May  6 14:18 help2comp.py*
+69914051 -rwxr-xr-x   1 supex  staff  -  759B May  6 14:18 indenterAndDuplicateLineDeleter.sh*
+69914052 -rwxr-xr-x   1 supex  staff  -  435B May  6 14:18 info.sh*
+69914053 -rwxr-xr-x   1 supex  staff  -  2.6K May  6 14:18 init.sh*
+69914054 -rwxr-xr-x   1 supex  staff  -  1.2K May  6 14:18 inotifyWatchLogAndEmailIfNAS.sh*
+69914055 -rwxr-xr-x   1 supex  staff  -  376B May  6 14:18 iostatShower.sh*
+69914056 -rwxr-xr-x   1 supex  staff  -  2.3K May  6 14:18 keybindingsToFZF.zsh*
+69914057 -rwxr-xr-x   1 supex  staff  -  2.1K May  6 14:18 keybindingsToFZFVim.zsh*
+69914058 -rwxr-xr-x   1 supex  staff  -  3.0K May  6 14:18 keybindingsToREADME.zsh*
+69914059 -rwxr-xr-x@  1 supex  staff  -   31B May  6 15:39 lib.sh*
+69914060 -rwxr-xr-x   1 supex  staff  -  1.2K May  6 14:18 listAllCommands.sh*
+69914061 -rwxr-xr-x   1 supex  staff  -  693B May  6 14:18 logs.sh*
+69914062 drwxr-xr-x  25 supex  staff  -  800B May  6 14:18 macOnly/
+69914086 -rwxr-xr-x   1 supex  staff  -   73K May  6 14:18 mantozshcomp.py*
+69914087 -rwxr-xr-x   1 supex  staff  -  1.8K May  6 14:18 manzshcompgen.zsh*
+69914088 -rwxr-xr-x   1 supex  staff  -  1.1K May  6 14:18 memWatch.sh*
+69914089 -rwxr-xr-x   1 supex  staff  -  497B May  6 14:18 menkeTech.sh*
+69914090 -rwxr-xr-x   1 supex  staff  -  492B May  6 14:18 menkeTechLolcat.sh*
+69914091 -rwxr-xr-x   1 supex  staff  -  922B May  6 14:18 minifySpaces.pl*
+69914092 -rwxr-xr-x   1 supex  staff  -  5.0K May  6 14:18 motd.sh*
+69914096 -rwxr-xr-x   1 supex  staff  -  1.0K May  6 14:18 mywatch.sh*
+69914093 -rwxr-xr-x   1 supex  staff  -  1.5K May  6 14:18 myWatchMaintainEscapes.sh*
+69914094 -rwxr-xr-x   1 supex  staff  -  1.8K May  6 14:18 myWatchNoBlink.sh*
+69914095 -rwxr-xr-x   1 supex  staff  -  1.9K May  6 14:18 myWatchNoBlinkColorized.sh*
+69914097 -rwxr-xr-x   1 supex  staff  -  242B May  6 14:18 odroidtemp.sh*
+69914098 -rwxr-xr-x   1 supex  staff  -  1.5K May  6 14:18 oldCounter.sh*
+69914099 -rwxr-xr-x   1 supex  staff  -  3.3K May  6 14:18 openAll.sh*
+69914100 -rwxr-xr-x   1 supex  staff  -  2.2K May  6 14:18 picture_finder.sh*
+69914101 -rwxr-xr-x   1 supex  staff  -  1.4K May  6 14:18 pingordie.sh*
+69914102 -rwxr-xr-x   1 supex  staff  -  1.4K May  6 14:18 pingordieBridge.sh*
+69914103 -rwxr-xr-x   1 supex  staff  -  1.5K May  6 14:18 pingordieBridgeVPN.sh*
+69914104 -rwxr-xr-x   1 supex  staff  -  2.0K May  6 14:18 powerTo.sh*
+69914105 -rwxr-xr-x   1 supex  staff  -  415B May  6 14:18 printHeader.sh*
+69914106 -rwxr-xr-x   1 supex  staff  -  345B May  6 14:18 pydfShower.sh*
+69914107 -rwxr-xr-x   1 supex  staff  -  585B May  6 14:18 readFIFO.sh*
+69914108 -rwxr-xr-x   1 supex  staff  -  462B May  6 14:18 redText.sh*
+69914109 -rwxr-xr-x   1 supex  staff  -  2.1K May  6 14:18 regexReplace.pl*
+69914110 -rwxr-xr-x   1 supex  staff  -  3.9K May  6 14:18 remoteRepoMonitorDaemon.sh*
+69914111 -rwxr-xr-x   1 supex  staff  -  595B May  6 14:18 removeSpaces.sh*
+69914112 -rwxr-xr-x   1 supex  staff  -  664B May  6 14:18 rpiDownloader.sh*
+69914113 -rwxr-xr-x   1 supex  staff  -  3.4K May  6 14:18 rpiSoftwareUpdater.sh*
+69914114 -rwxr-xr-x   1 supex  staff  -  470B May  6 14:18 saygoogle.sh*
+69914115 -rwxr-xr-x   1 supex  staff  -  1.6K May  6 14:18 sdiffColorizer.pl*
+69914116 -rwxr-xr-x   1 supex  staff  -  2.8K May  6 14:18 secureDelete.sh*
+69914117 -rwxr-xr-x   1 supex  staff  -  2.5K May  6 14:18 shebangChanger.sh*
+69914118 -rwxr-xr-x   1 supex  staff  -  1.3K May  6 14:18 sixLangDisplayer.sh*
+69914119 -rwxr-xr-x   1 supex  staff  -  881B May  6 14:18 sortedArrayCounter.sh*
+69914120 -rwxr-xr-x   1 supex  staff  -  4.0K May  6 14:18 splitReg.sh*
+69914121 -rwxr-xr-x   1 supex  staff  -  354B May  6 14:18 sshTunnelVnc.sh*
+69914122 -rwxr-xr-x   1 supex  staff  -  355B May  6 14:18 sshTunnelVnc2.sh*
+69914123 -rwxr-xr-x   1 supex  staff  -  523B May  6 14:18 startContainers.sh*
+69914124 -rwxr-xr-x   1 supex  staff  -  1.5K May  6 14:18 stdinSdiffColorizer.pl*
+69914125 -rwxr-xr-x   1 supex  staff  -  521B May  6 14:18 stopContainers.sh*
+69914126 -rwxr-xr-x   1 supex  staff  -  1.5K May  6 14:18 storageShower.sh*
+69914127 -rwxr-xr-x   1 supex  staff  -  819B May  6 14:18 sync.sh*
+69914128 -rwxr-xr-x   1 supex  staff  -  3.2K May  6 14:18 tailZOU.sh*
+69914129 -rwxr-xr-x   1 supex  staff  -  2.2K May  6 14:18 templater.sh*
+69914130 -rwxr-xr-x   1 supex  staff  -  496B May  6 14:18 test.sh*
+69914131 -rwxr-xr-x   1 supex  staff  -  6.0K May  6 14:18 textmessage.sh*
+69914132 -rwxr-xr-x   1 supex  staff  -  2.4K May  6 14:18 tgzLocalInstaller.sh*
+69914133 -rwxr-xr-x   1 supex  staff  -  225B May  6 14:18 timeConverter.sh*
+69914134 -rwxr-xr-x   1 supex  staff  -  844B May  6 14:18 transfer.sh*
+69914138 -rwxr-xr-x   1 supex  staff  -  3.1K May  6 14:18 updatePi.sh*
+69914139 -rwxr-xr-x   1 supex  staff  -  9.7K May  6 14:18 updater.sh*
+69914140 -rwxr-xr-x   1 supex  staff  -  701B May  6 14:18 updaterEmail.sh*
+69914141 -rwxr-xr-x   1 supex  staff  -  387B May  6 14:18 updaterForLaunchCtl.sh*
+69914142 -rwxr-xr-x   1 supex  staff  -  1.0K May  6 14:18 updaterPip.zsh*
+69914143 -rwxr-xr-x   1 supex  staff  -  1.5K May  6 14:18 updaterPipSudo.sh*
+69914135 -rwxr-xr-x   1 supex  staff  -  721B May  6 14:18 upLoadDS.sh*
+69914136 -rwxr-xr-x   1 supex  staff  -  723B May  6 14:18 upLoadPi.sh*
+69914137 -rwxr-xr-x   1 supex  staff  -  727B May  6 14:18 upLoadPi2.sh*
+69914144 -rwxr-xr-x   1 supex  staff  -  775B May  6 14:18 uploadWebDS.sh*
+69914145 -rwxr-xr-x   1 supex  staff  -  1.3K May  6 14:18 uploadWebPi.sh*
+69914146 -rwxr-xr-x   1 supex  staff  -  400B May  6 14:18 userRootRemover.sh*
+69914147 -rwxr-xr-x   1 supex  staff  -  1.1K May  6 14:18 watchServiceFSWatchGit.sh*
+69914148 -rwxr-xr-x   1 supex  staff  -  472B May  6 14:18 watchServiceFSWatchLS-ALH.sh*
+69914149 -rwxr-xr-x   1 supex  staff  -  967B May  6 14:18 watchServiceFSWatchPiDesktop.sh*
+69914150 -rwxr-xr-x   1 supex  staff  -  983B May  6 14:18 watchServiceFSWatchPiWeb.sh*
+69914151 -rwxr-xr-x   1 supex  staff  -  1.2K May  6 14:18 watchServiceFSWatchRustCompile.sh*
+69914152 -rwxr-xr-x   1 supex  staff  -  433B May  6 14:18 watchtree1.sh*
+69914153 -rwxr-xr-x   1 supex  staff  -  446B May  6 14:18 watchtree1Color.sh*
+69914154 -rwxr-xr-x   1 supex  staff  -  428B May  6 14:18 watchtree2.sh*
+69914155 -rwxr-xr-x   1 supex  staff  -  506B May  6 14:18 zpwrBannerSleep.sh*
+69914156 -rwxr-xr-x   1 supex  staff  -  1.2K May  6 14:18 zpwrClearList.zsh*
+69914157 -rwxr-xr-x   1 supex  staff  -  3.1K May  6 14:18 zpwrRunner.sh*
+69914159 -rwxr-xr-x   1 supex  staff  -  2.2K May  6 14:18 zshcompgen.zsh*
+69914158 -rwxr-xr-x   1 supex  staff  -  1.9K May  6 14:18 zshRegenSearchableEnv.zsh*
+]7;file://supex.local/Users/supex/.zpwr/scripts[?25l[?12l[?25h[?25l[?12l[?25h[0m[0m]7;file://supex.local/Users/supex/.zpwr/scripts[0m[0m]7;file://supex.local/Users/supex/.zpwr/scripts[0m[0m]7;file://supex.local/Users/supex/.zpwr/scripts[0m[0m]7;file://supex.local/Users/supex/.zpwr[0m[0m]7;file://supex.local/Users/supex/.zpwr/install[?25l[?12l[?25h[31m…[39m[?25l[?12l[?25h[?25l[?12l[?25h
+
+
+
+
+
+
+
+[31m…[39m
